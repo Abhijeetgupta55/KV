@@ -16,13 +16,20 @@ fault-injection test harness.
 | Milestone | State |
 |---|---|
 | 0 — Single-node KV over gRPC (server, CLI, tests, CI) | ✅ done |
-| 1 — Persistence: WAL + snapshots + crash recovery | planned |
-| 2 — Raft consensus: election, replication, failover | planned |
-| 3 — Sharding: consistent hashing, multiple Raft groups | planned |
-| 4 — Fault-injection harness + linearizability checking | planned |
+| 1 — Durability: WAL + snapshots + crash recovery | ✅ done |
+| 2 — Raft consensus: election, replication, failover | next |
+| 3 — Production Raft: compaction, membership changes | planned |
+| 4 — Linearizable reads (ReadIndex) | planned |
+| 5 — Sharding: multiple Raft groups | planned |
+| 6 — Fault injection + linearizability checking | planned |
+| 7 — Metrics, admin CLI, benchmarks | planned |
 
-The store is currently **single-node and in-memory**; data does not survive
-a restart. That is what Milestones 1–2 exist to fix, in that order.
+The store is currently **single-node but durable**: every acknowledged
+write is fsynced to a write-ahead log before the client hears "OK", state
+is periodically snapshotted, and recovery replays the log tail — proven by
+an integration test that hard-kills the server mid-write-storm and audits
+every acknowledged write after restart. Replication is Milestone 2's job.
+Full roadmap: [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Target architecture
 
@@ -63,7 +70,7 @@ make build          # builds bin/kvserver and bin/kvcli
 make test           # unit + integration tests
 make race           # same, under the race detector
 
-bin/kvserver                          # serves on 127.0.0.1:5001
+bin/kvserver                          # serves on 127.0.0.1:5001, data in ./data
 bin/kvcli put greeting "hello"        # → OK
 bin/kvcli get greeting                # → hello
 bin/kvcli delete greeting             # → deleted
@@ -80,6 +87,8 @@ kvcli [-addr host:port] get <key>            print value; exit 1 if absent
 kvcli [-addr host:port] delete <key>         remove key (idempotent)
 
 kvserver [-listen host:port]                 run a node (default 127.0.0.1:5001)
+         [-data-dir dir]                     WAL + snapshot directory (default ./data)
+         [-snapshot-threshold-bytes n]       WAL size that triggers a snapshot
 ```
 
 Keys are UTF-8 strings up to 4 KiB; values are opaque bytes up to 1 MiB.
@@ -91,14 +100,19 @@ proto/       gRPC schema + committed generated code
 cmd/server   node entrypoint
 cmd/cli      kvcli client
 internal/
-  storage/   state machine (in-memory store; WAL and snapshots land here)
+  storage/   state machine + WAL + snapshots + crash recovery
   server/    gRPC service: validation + response mapping
-docs/        DESIGN.md and ADRs
+test/crash   crash-recovery integration test (hard-kills a real server)
+docs/        DESIGN.md, ROADMAP.md, and ADRs
 ```
 
 ## Testing
 
 `go test -race ./...` runs everything CI runs: unit tests for the storage
-engine and service layer, plus an end-to-end test over an in-memory gRPC
-connection. CI (GitHub Actions) enforces gofmt, `go vet`, the build, and
-the race-detector test run on every push.
+engine (including a test that cuts a write-ahead log at every byte offset
+of its final record to prove torn-write recovery), service-layer tests
+over a real durable store, an end-to-end test over an in-memory gRPC
+connection, and a crash test that repeatedly kill-9s a real server process
+mid-write and audits every acknowledged write after restart. CI (GitHub
+Actions) enforces gofmt, `go vet`, the build, and the race-detector test
+run on every push.
