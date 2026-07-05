@@ -19,9 +19,15 @@ import (
 // in-memory connection, so a registration or codec mistake can't hide
 // behind direct method calls.
 func TestOverRealGRPCConnection(t *testing.T) {
+	store, err := storage.Open(t.TempDir(), storage.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+
 	lis := bufconn.Listen(1 << 20)
 	grpcServer := grpc.NewServer()
-	kvv1.RegisterKVServer(grpcServer, New(storage.NewMemStore()))
+	kvv1.RegisterKVServer(grpcServer, New(store))
 	go grpcServer.Serve(lis)
 	t.Cleanup(grpcServer.Stop)
 

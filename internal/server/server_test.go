@@ -13,12 +13,21 @@ import (
 	kvv1 "github.com/Abhijeetgupta55/raftkv/proto/kv/v1"
 )
 
-func newTestServer() *KVServer {
-	return New(storage.NewMemStore())
+// newTestServer runs the service on a real DurableStore in a temp dir —
+// the same engine production uses, so these tests cover the full write
+// path including the WAL.
+func newTestServer(t *testing.T) *KVServer {
+	t.Helper()
+	store, err := storage.Open(t.TempDir(), storage.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	return New(store)
 }
 
 func TestPutGetDeleteRoundTrip(t *testing.T) {
-	s := newTestServer()
+	s := newTestServer(t)
 	ctx := context.Background()
 
 	if _, err := s.Put(ctx, &kvv1.PutRequest{Key: "k", Value: []byte("v")}); err != nil {
@@ -51,7 +60,7 @@ func TestPutGetDeleteRoundTrip(t *testing.T) {
 }
 
 func TestGetMissIsNotAnError(t *testing.T) {
-	s := newTestServer()
+	s := newTestServer(t)
 
 	got, err := s.Get(context.Background(), &kvv1.GetRequest{Key: "absent"})
 	if err != nil {
@@ -63,7 +72,7 @@ func TestGetMissIsNotAnError(t *testing.T) {
 }
 
 func TestDeleteAbsentKeyIsIdempotent(t *testing.T) {
-	s := newTestServer()
+	s := newTestServer(t)
 
 	del, err := s.Delete(context.Background(), &kvv1.DeleteRequest{Key: "absent"})
 	if err != nil {
@@ -75,7 +84,7 @@ func TestDeleteAbsentKeyIsIdempotent(t *testing.T) {
 }
 
 func TestRequestValidation(t *testing.T) {
-	s := newTestServer()
+	s := newTestServer(t)
 	ctx := context.Background()
 
 	tests := []struct {
@@ -121,7 +130,7 @@ func TestRequestValidation(t *testing.T) {
 }
 
 func TestLimitBoundariesAreInclusive(t *testing.T) {
-	s := newTestServer()
+	s := newTestServer(t)
 	ctx := context.Background()
 
 	_, err := s.Put(ctx, &kvv1.PutRequest{

@@ -12,7 +12,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/Abhijeetgupta55/raftkv/internal/storage"
 	kvv1 "github.com/Abhijeetgupta55/raftkv/proto/kv/v1"
 )
 
@@ -24,13 +23,21 @@ const (
 	MaxValueBytes = 1 * 1024 * 1024
 )
 
+// Store is the storage engine the service runs on. Mutations can fail
+// (they hit disk); reads cannot (they are served from memory).
+type Store interface {
+	Put(key string, value []byte) error
+	Get(key string) (value []byte, found bool)
+	Delete(key string) (existed bool, err error)
+}
+
 // KVServer serves the client-facing KV API for a single node.
 type KVServer struct {
 	kvv1.UnimplementedKVServer
-	store *storage.MemStore
+	store Store
 }
 
-func New(store *storage.MemStore) *KVServer {
+func New(store Store) *KVServer {
 	return &KVServer{store: store}
 }
 
@@ -43,7 +50,9 @@ func (s *KVServer) Put(ctx context.Context, req *kvv1.PutRequest) (*kvv1.PutResp
 			"value is %d bytes, limit is %d", len(req.GetValue()), MaxValueBytes)
 	}
 
-	s.store.Put(req.GetKey(), req.GetValue())
+	if err := s.store.Put(req.GetKey(), req.GetValue()); err != nil {
+		return nil, status.Errorf(codes.Internal, "storage: %v", err)
+	}
 	return &kvv1.PutResponse{}, nil
 }
 
@@ -61,7 +70,10 @@ func (s *KVServer) Delete(ctx context.Context, req *kvv1.DeleteRequest) (*kvv1.D
 		return nil, err
 	}
 
-	existed := s.store.Delete(req.GetKey())
+	existed, err := s.store.Delete(req.GetKey())
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "storage: %v", err)
+	}
 	return &kvv1.DeleteResponse{Existed: existed}, nil
 }
 
